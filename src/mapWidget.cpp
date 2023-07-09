@@ -1,52 +1,24 @@
-#include <format>
-#define NOMINMAX
+#include "mapWidget.hpp"
 #include "align.hpp"
 #include "child.hpp"
 #include "column.hpp"
 #include "container.hpp"
 #include "gestureDetector.hpp"
 #include "image.hpp"
-#include "mapWidget.hpp"
+#include "mapData.hpp"
+#include "renderer.hpp"
 #include "row.hpp"
 #include "text.hpp"
+#include "vec2.hpp"
 #include <any>
+#include <format>
 #include <limits>
+#include <memory>
 
 
 using namespace squi;
 
 Map::MapWidget::Impl::Impl(const MapWidget &args) : Widget(args.widget, Widget::Flags::Default()) {
-	// setChildren({Column{
-	// 	.widget{
-	// 		.width = Size::Shrink,
-	// 		.height = Size::Shrink,
-	// 	},
-	// 	.children{
-	// 		[&]() -> Children {
-	// 			Children ret{};
-	// 			for (const auto &slice: mapData.chunks) {
-	// 				Children ret2{};
-	// 				for (const auto &item: slice)
-	// 					ret2.children.push_back(Image{
-	// 						.widget{
-	// 							.width = 512.f,
-	// 							.height = 512.f,
-	// 						},
-	// 						.fit = Image::Fit::none,
-	// 						.image{Image::Data::fromFileAsync(item.fileName)},
-	// 					});
-	// 				ret.children.push_back(Row{
-	// 					.widget{
-	// 						.width = Size::Shrink,
-	// 						.height = Size::Shrink,
-	// 					},
-	// 					.children{ret2},
-	// 				});
-	// 			}
-	// 			return ret;
-	// 		}(),
-	// 	},
-	// }});
 	setChildren({Align{
 		.child{
 			Text{
@@ -57,90 +29,80 @@ Map::MapWidget::Impl::Impl(const MapWidget &args) : Widget(args.widget, Widget::
 }
 
 void Map::MapWidget::Impl::onUpdate() {
-	if (mapData.ready) {
+	if (!mapData.ready) return;
+	if (!loaded) {
 		offset = {
 			-static_cast<float>(mapData.offset[0]),
 			-static_cast<float>(mapData.offset[1]),
 		};
-		setChildren({Column{
-			.widget{
-				.width = Size::Shrink,
-				.height = Size::Shrink,
-			},
-			.children{
-				[&]() -> Children {
-					Children ret{};
-					for (const auto &slice: mapData.chunks) {
-						Children ret2{};
-						for (const auto &item: slice) {
-							Children columnChildren{};
-							for (size_t y = 0; y < 8; y++) {
-								Children rowChildren{};
-								for (size_t x = 0; x < 8; x++) {
-									rowChildren.children.push_back(Image{
-										.widget{
-											.width = 512.f,
-											.height = 512.f,
-											.sizeConstraints{
-												.minWidth = 512.f,
-												.minHeight = 512.f,
-											},
-										},
-										.fit = Image::Fit::none,
-										.image{Image::Data::fromFileAsync(std::format("tiles/{}/4_{}_{}.png", item.fileName.substr(0, item.fileName.find_last_of('.')), y, x))},
-									});
-								}
-								columnChildren.children.push_back(Row{
-									.widget{
-										.width = Size::Shrink,
-										.height = Size::Shrink,
-									},
-									.children{rowChildren},
-								});
-							}
-							ret2.children.push_back(Column{
-								.widget{
-									.width = Size::Shrink,
-									.height = Size::Shrink,
-								},
-								.children{columnChildren},
-							});
-
-							// ret2.children.push_back(Image{
-							// 	.widget{
-							// 		.width = 4096.f,
-							// 		.height = 4096.f,
-							// 	},
-							// 	.fit = Image::Fit::none,
-							// 	.image{Image::Data::fromFileAsync(item.fileName)},
-							// });
-						}
-						ret.children.push_back(Row{
-							.widget{
-								.width = Size::Shrink,
-								.height = Size::Shrink,
-							},
-							.children{ret2},
-						});
-					}
-					return ret;
-				}(),
-			},
-		}});
-		mapData.ready = false;
+		loaded = true;
+		setChildren({});
 	}
+
 	const auto &gd = std::any_cast<GestureDetector::Storage>(state.properties.at("gestureDetector"));
 	if (gd.active) {
 		offset += gd.getDragDelta();
 	}
+
+	const auto &clipRect = getRect();
+	const auto offsetClipRect = [&]() -> Rect {
+		auto ret = clipRect;
+		ret.offset(-offset);
+		return ret;
+	}();
+	uint16_t tileSize = mapData.chunkSize / Map::tileRowCount[zoomIndex];
+
+	auto left = static_cast<uint16_t>(offsetClipRect.left / static_cast<float>(tileSize));
+	auto top = static_cast<uint16_t>(offsetClipRect.top / static_cast<float>(tileSize));
+	auto right = static_cast<uint16_t>(offsetClipRect.right / static_cast<float>(tileSize));
+	auto bottom = static_cast<uint16_t>(offsetClipRect.bottom / static_cast<float>(tileSize));
+
+	const uint16_t maxTileCountX = mapData.totalSize[0] / tileSize;
+	const uint16_t maxTileCountY = mapData.totalSize[1] / tileSize;
+	left = std::clamp(left, (uint16_t) 0, maxTileCountX);
+	top = std::clamp(top, (uint16_t) 0, maxTileCountY);
+	right = std::clamp(right, (uint16_t) 0, maxTileCountX);
+	bottom = std::clamp(bottom, (uint16_t) 0, maxTileCountY);
+
+	for (uint16_t x = left; x <= right; ++x) {
+		for (uint16_t y = top; y <= bottom; ++y) {
+			auto &tile = mapData.tiles.at(zoomLevels[zoomIndex]).at(y).at(x);
+			if (tiles.contains(tile.fileName)) continue;
+			tiles.emplace(tile.fileName, Tile{
+											 .image{
+												 std::make_shared<Image::Impl>(Image{
+													 .image{Image::Data::fromFileAsync(tile.fileName)},
+												 }),
+											 },
+											 .rect = tile.rect,
+										 });
+		}
+	}
+
+	for (auto it = tiles.begin(); it != tiles.end();) {
+		if (!it->second.rect.intersects(offsetClipRect)) {
+			it = tiles.erase(it);
+		} else {
+			++it;
+		}
+	}
 }
 
-void Map::MapWidget::Impl::layoutChildren(vec2 &maxSize, vec2 &minSize) {
-	vec2 size{std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
-	Widget::layoutChildren(size, minSize);
+void Map::MapWidget::Impl::updateChildren() {
+	for (auto &[key, child]: tiles) {
+		child.image->state.parent = this;
+		child.image->update();
+	}
 }
 
-void Map::MapWidget::Impl::arrangeChildren(vec2 &pos) {
-	pos += offset;
-	Widget::arrangeChildren(pos);
+void Map::MapWidget::Impl::drawChildren() {
+	auto &renderer = Renderer::getInstance();
+
+	for (auto &[key, child]: tiles) {
+		auto &quad = child.image->getQuad();
+		quad.setPos(child.rect.getTopLeft() + offset);
+		quad.setSize(child.rect.size());
+
+		renderer.addQuad(quad);
+	}
 }

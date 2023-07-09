@@ -1,6 +1,7 @@
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
 #include "mapWidget.hpp"
 #include "performanceOverlay.hpp"
-#define WIN32_LEAN_AND_MEAN
 
 #include "box.hpp"
 #include "glt/include/window.hpp"

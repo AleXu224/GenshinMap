@@ -5,6 +5,7 @@
 #include "rect.hpp"
 #include "widget.hpp"
 #include <optional>
+#include <unordered_map>
 
 
 namespace Map {
@@ -15,19 +16,21 @@ namespace Map {
 		class Impl : public squi::Widget {
 			// Data
 			MapData mapData{};
-            squi::vec2 offset{};
+			squi::vec2 offset{};
+			struct Tile {
+				std::shared_ptr<squi::Image::Impl> image;
+				squi::Rect rect;
+			};
+			std::unordered_map<std::string, Tile> tiles{};
+			bool loaded = false;
 
 		public:
 			Impl(const MapWidget &args);
-			struct Chunk {
-				std::string path;
-				std::optional<squi::Image::Impl> image;
-			};
-			// Map of levels of vectors of vectors of chunks
+			uint16_t zoomIndex = 3;
 
             void onUpdate() override;
-            void layoutChildren(squi::vec2 &maxSize, squi::vec2 &minSize) override;
-            void arrangeChildren(squi::vec2 &pos) override;
+			void updateChildren() override;
+			void drawChildren() override;
 		};
 
 		operator squi::Child() const {
