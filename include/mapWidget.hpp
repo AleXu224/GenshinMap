@@ -23,10 +23,11 @@ namespace Map {
 			};
 			std::unordered_map<std::string, Tile> tiles{};
 			bool loaded = false;
+			uint16_t zoomIndex = 3;
+			float zoom = 0;
 
 		public:
 			Impl(const MapWidget &args);
-			uint16_t zoomIndex = 3;
 
             void onUpdate() override;
 			void updateChildren() override;
